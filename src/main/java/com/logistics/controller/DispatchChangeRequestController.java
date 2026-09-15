@@ -105,8 +105,9 @@ public class DispatchChangeRequestController {
     // real user id. Throwing here (rather than trusting a client-supplied id)
     // is deliberate - accepting an unauthenticated claim of identity for an
     // approval/rejection action would be a genuine security hole.
+    // Replaces the UnsupportedOperationException placeholder from Step 10
     private Long resolveCurrentUserId(Authentication authentication) {
-        throw new UnsupportedOperationException(
-                "Pending Step 12 - authenticated user resolution not yet wired");
+        var userDetails = (com.logistics.security.CustomUserDetails) authentication.getPrincipal();
+        return userDetails.getId();
     }
 }

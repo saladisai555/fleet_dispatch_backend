@@ -1,6 +1,8 @@
 package com.logistics.service.impl;
 
+import com.logistics.dto.request.ComplianceEvaluateRequest;
 import com.logistics.dto.response.ComplianceCheckResponse;
+import com.logistics.dto.response.ComplianceQaResponse;
 import com.logistics.entity.ComplianceCheck;
 import com.logistics.entity.DeliveryOrder;
 import com.logistics.entity.Driver;
@@ -10,12 +12,10 @@ import com.logistics.entity.ManifestItem;
 import com.logistics.entity.Vehicle;
 import com.logistics.entity.enums.ManifestStatus;
 import com.logistics.exception.ResourceNotFoundException;
-import com.logistics.repository.ComplianceCheckRepository;
-import com.logistics.repository.DispatchChangeRequestRepository;
-import com.logistics.repository.ManifestItemRepository;
-import com.logistics.repository.ManifestRepository;
+import com.logistics.repository.*;
 import com.logistics.service.ComplianceService;
 import com.logistics.service.IncidentService;
+import com.logistics.service.VehicleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +41,18 @@ public class ComplianceServiceImpl implements ComplianceService {
     private final ManifestRepository manifestRepository;
     private final ManifestItemRepository manifestItemRepository;
     private final IncidentService incidentService;
+    private final VehicleRepository vehicleRepository;
+    private final DriverRepository driverRepository;
+    // ComplianceServiceImpl - violation codes. Only DRIVER_HOURS_EXCEEDED is
+// verbatim from Agent_Architecture.md Section 17; the rest follow the same
+// naming convention by inference, since the doc only worked one example -
+// flagging this honestly rather than presenting all six as directly quoted.
+    private static final String CODE_VEHICLE_CAPACITY = "VEHICLE_CAPACITY_EXCEEDED";
+    private static final String CODE_DRIVER_HOURS = "DRIVER_HOURS_EXCEEDED"; // verbatim from docs
+    private static final String CODE_DELIVERY_WINDOW = "DELIVERY_WINDOW_VIOLATION";
+    private static final String CODE_VEHICLE_TYPE = "VEHICLE_TYPE_UNSUITABLE";
+    private static final String CODE_TEMPERATURE = "TEMPERATURE_REQUIREMENT_NOT_MET";
+    private static final String CODE_ROUTE_SAFETY = "ROUTE_SAFETY_VIOLATION";
 
     @Override
     public ComplianceEvaluationResult evaluate(ComplianceEvaluationRequest request) {
@@ -51,17 +63,30 @@ public class ComplianceServiceImpl implements ComplianceService {
         boolean temperaturePassed = checkTemperatureRequirement(request.primaryOrder(), request.proposedVehicle());
         boolean routeSafetyPassed = checkRouteSafety(request.relevantLocationIds());
 
-        // Mirrors chk_compliance_overall exactly: overall can only be true if
-        // every individual check passed. No partial-override logic.
         boolean overallPassed = capacityPassed && hoursPassed && windowPassed
                 && typePassed && temperaturePassed && routeSafetyPassed;
 
-        String failureReason = overallPassed ? null : buildFailureReason(
-                capacityPassed, hoursPassed, windowPassed, typePassed, temperaturePassed, routeSafetyPassed);
+        List<ComplianceEvaluationResult.Violation> violations = new java.util.ArrayList<>();
+        if (!capacityPassed) violations.add(new ComplianceEvaluationResult.Violation(
+                CODE_VEHICLE_CAPACITY, "Proposed vehicle capacity is insufficient for the manifest's total cargo"));
+        if (!hoursPassed) violations.add(new ComplianceEvaluationResult.Violation(
+                CODE_DRIVER_HOURS, "Proposed assignment exceeds the driver's remaining allowed driving hours"));
+        if (!windowPassed) violations.add(new ComplianceEvaluationResult.Violation(
+                CODE_DELIVERY_WINDOW, "Proposed ETA falls outside the order's delivery window"));
+        if (!typePassed) violations.add(new ComplianceEvaluationResult.Violation(
+                CODE_VEHICLE_TYPE, "Proposed vehicle is not operationally suitable for this assignment"));
+        if (!temperaturePassed) violations.add(new ComplianceEvaluationResult.Violation(
+                CODE_TEMPERATURE, "Proposed vehicle cannot satisfy the order's temperature requirement"));
+        if (!routeSafetyPassed) violations.add(new ComplianceEvaluationResult.Violation(
+                CODE_ROUTE_SAFETY, "An active high-severity incident affects a relevant location on this route"));
+
+        String failureReason = overallPassed ? null
+                : violations.stream().map(ComplianceEvaluationResult.Violation::message)
+                .collect(java.util.stream.Collectors.joining("; "));
 
         return new ComplianceEvaluationResult(
                 capacityPassed, hoursPassed, windowPassed, typePassed, temperaturePassed,
-                routeSafetyPassed, overallPassed, failureReason);
+                routeSafetyPassed, overallPassed, failureReason, violations);
     }
 
     @Override
@@ -233,5 +258,29 @@ public class ComplianceServiceImpl implements ComplianceService {
                 c.getVehicleTypePassed(), c.getTemperatureRequirementPassed(), c.getRouteSafetyPassed(),
                 c.getOverallPassed(), c.getFailureReason(), c.getCheckedAt()
         );
+    }
+
+    // Added to ComplianceServiceImpl
+    @Override
+    public ComplianceQaResponse evaluateCandidate(ComplianceEvaluateRequest request) {
+        Manifest manifest = manifestRepository.findById(request.affectedManifestId())
+                .orElseThrow(() -> new ResourceNotFoundException("Manifest not found: " + request.affectedManifestId()));
+        Vehicle vehicle = vehicleRepository.findById(request.proposedVehicleId())
+                .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found: " + request.proposedVehicleId()));
+        Driver driver = driverRepository.findById(request.proposedDriverId())
+                .orElseThrow(() -> new ResourceNotFoundException("Driver not found: " + request.proposedDriverId()));
+
+        DeliveryOrder primaryOrder = manifestItemRepository.findByManifestIdOrderBySequenceNumberAsc(manifest.getId())
+                .stream().findFirst().map(ManifestItem::getOrder)
+                .orElseThrow(() -> new ResourceNotFoundException("Manifest has no items: " + manifest.getId()));
+
+        ComplianceEvaluationRequest evalRequest = new ComplianceEvaluationRequest(
+                manifest, vehicle, driver, primaryOrder,
+                request.proposedAdditionalDrivingHours() != null ? request.proposedAdditionalDrivingHours() : BigDecimal.ZERO,
+                request.proposedEta(),
+                List.of(primaryOrder.getPickupLocation().getId(), primaryOrder.getDeliveryLocation().getId())
+        );
+
+        return ComplianceQaResponse.from(evaluate(evalRequest));
     }
 }

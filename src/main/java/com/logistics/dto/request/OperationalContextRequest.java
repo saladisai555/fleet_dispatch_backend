@@ -1,5 +1,7 @@
 package com.logistics.dto.request;
 
+import com.logistics.dto.response.ComplianceQaResponse;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -14,7 +16,9 @@ public record OperationalContextRequest(
         AffectedOrderSummary affectedOrder,
         CurrentAssignmentSummary currentAssignment,
         List<CandidateVehicleSummary> candidateVehicles,
-        List<CandidateDriverSummary> candidateDrivers
+        List<CandidateDriverSummary> candidateDrivers,
+        List<WeatherSummary> relevantWeather,               // new - Section 23
+        ComplianceQaResponse preliminaryComplianceCheck
 ) {
     public record TriggerSummary(
             String triggerType,
@@ -59,4 +63,5 @@ public record OperationalContextRequest(
             BigDecimal remainingDrivingHours,
             String currentLocationName
     ) {}
+    public record WeatherSummary(String alertType, String severity, String description) {}
 }

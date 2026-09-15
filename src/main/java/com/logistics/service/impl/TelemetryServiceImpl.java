@@ -1,19 +1,21 @@
 package com.logistics.service.impl;
 
+import com.logistics.dto.AgentEventCreateRequest;
 import com.logistics.dto.request.VehicleTelemetryRequest;
 import com.logistics.dto.response.VehicleTelemetryResponse;
 import com.logistics.entity.Vehicle;
 import com.logistics.entity.VehicleTelemetry;
-import com.logistics.entity.enums.EngineStatus;
+import com.logistics.entity.enums.*;
 import com.logistics.repository.VehicleTelemetryRepository;
+import com.logistics.service.AgentEventService;
 import com.logistics.service.TelemetryService;
-import com.logistics.service.VehicleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.logistics.exception.ResourceNotFoundException;
+import com.logistics.repository.VehicleRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -30,7 +32,8 @@ public class TelemetryServiceImpl implements TelemetryService {
     // the vehicle's own configured min/max — a reading outside the vehicle's
     // own refrigeration range is an operational fault regardless of any order.
     private final VehicleTelemetryRepository telemetryRepository;
-    private final VehicleService vehicleService;
+    private final VehicleRepository vehicleRepository;
+    private final AgentEventService agentEventService;
 
     // TelemetryServiceImpl - dedup window added
     @Value("${app.telemetry.dedup-window-seconds:30}")
@@ -42,7 +45,12 @@ public class TelemetryServiceImpl implements TelemetryService {
     @Override
     @Transactional
     public VehicleTelemetryResponse ingest(VehicleTelemetryRequest request) {
-        Vehicle vehicle = vehicleService.findEntity(request.vehicleId());
+
+        Vehicle vehicle = vehicleRepository.findById(request.vehicleId())
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Vehicle not found: " + request.vehicleId()
+                        ));
 
         LocalDateTime windowStart = request.recordedAt().minusSeconds(dedupWindowSeconds);
         boolean isDuplicate = telemetryRepository
@@ -74,6 +82,28 @@ public class TelemetryServiceImpl implements TelemetryService {
                 .build();
 
         VehicleTelemetry saved = telemetryRepository.save(telemetry);
+
+        // Added dependency: AgentEventService
+// Added right after "VehicleTelemetry saved = telemetryRepository.save(telemetry);"
+        if (temperatureAlert) {
+            agentEventService.log(new AgentEventCreateRequest(
+                    AgentType.LISTENER, "TEMPERATURE_ALERT", EventSeverity.HIGH,
+                    AgentEntityType.VEHICLE, vehicle.getId(),
+                    "Cargo temperature out of range for vehicle " + vehicle.getVehicleCode()
+                            + ": " + request.cargoTemperatureC() + "°C",
+                    null, null, AgentEventStatus.COMPLETED
+            ));
+        }
+
+        if (request.engineStatus() == EngineStatus.FAULT) {
+            agentEventService.log(new AgentEventCreateRequest(
+                    AgentType.LISTENER, "ENGINE_FAULT", EventSeverity.CRITICAL,
+                    AgentEntityType.VEHICLE, vehicle.getId(),
+                    "Engine fault on vehicle " + vehicle.getVehicleCode()
+                            + (request.engineFaultCode() != null ? " (code: " + request.engineFaultCode() + ")" : ""),
+                    null, null, AgentEventStatus.COMPLETED
+            ));
+        }
 
         if (request.odometerKm().compareTo(vehicle.getOdometerKm()) > 0) {
             vehicle.setOdometerKm(request.odometerKm());

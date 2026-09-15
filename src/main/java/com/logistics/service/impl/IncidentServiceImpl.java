@@ -1,16 +1,16 @@
 package com.logistics.service.impl;
 
+import com.logistics.dto.AgentEventCreateRequest;
 import com.logistics.dto.request.IncidentRequest;
 import com.logistics.dto.response.IncidentResponse;
 import com.logistics.dto.request.IncidentStatusUpdateRequest;
 import com.logistics.entity.Incident;
 import com.logistics.entity.Location;
-import com.logistics.entity.enums.IncidentSeverity;
-import com.logistics.entity.enums.IncidentStatus;
-import com.logistics.entity.enums.IncidentType;
+import com.logistics.entity.enums.*;
 import com.logistics.exception.BusinessRuleViolationException;
 import com.logistics.exception.ResourceNotFoundException;
 import com.logistics.repository.IncidentRepository;
+import com.logistics.service.AgentEventService;
 import com.logistics.service.IncidentService;
 import com.logistics.service.LocationService;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +33,16 @@ public class IncidentServiceImpl implements IncidentService {
 
     private final IncidentRepository incidentRepository;
     private final LocationService locationService;
-
+    private final AgentEventService agentEventService;
+    // New private helper in IncidentServiceImpl
+    private EventSeverity mapToEventSeverity(IncidentSeverity severity) {
+        return switch (severity) {
+            case LOW -> EventSeverity.LOW;
+            case MEDIUM -> EventSeverity.MEDIUM;
+            case HIGH -> EventSeverity.HIGH;
+            case CRITICAL -> EventSeverity.CRITICAL;
+        };
+    }
 
     // IncidentServiceImpl.create - idempotency check added before the existing validation
     @Override
@@ -83,8 +92,15 @@ public class IncidentServiceImpl implements IncidentService {
                 .source(request.source())
                 .createdAt(LocalDateTime.now())
                 .build();
+        Incident saved = incidentRepository.save(incident);
+        agentEventService.log(new AgentEventCreateRequest(
+                AgentType.LISTENER, "INCIDENT_DETECTED", mapToEventSeverity(saved.getSeverity()),
+                AgentEntityType.INCIDENT, saved.getId(),
+                "New " + saved.getIncidentType() + " incident detected: " + saved.getTitle(),
+                null, null, AgentEventStatus.COMPLETED
+        ));
 
-        return toResponse(incidentRepository.save(incident));
+        return toResponse(saved);
     }
     // Added to IncidentServiceImpl
     @Override

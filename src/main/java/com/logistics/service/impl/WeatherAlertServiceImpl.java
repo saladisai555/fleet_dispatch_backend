@@ -1,11 +1,17 @@
 package com.logistics.service.impl;
 
+import com.logistics.dto.AgentEventCreateRequest;
 import com.logistics.dto.request.WeatherAlertRequest;
 import com.logistics.dto.response.WeatherAlertResponse;
 import com.logistics.entity.Location;
 import com.logistics.entity.WeatherAlert;
+import com.logistics.entity.enums.AgentEntityType;
+import com.logistics.entity.enums.AgentEventStatus;
+import com.logistics.entity.enums.AgentType;
+import com.logistics.entity.enums.EventSeverity;
 import com.logistics.exception.ResourceNotFoundException;
 import com.logistics.repository.WeatherAlertRepository;
+import com.logistics.service.AgentEventService;
 import com.logistics.service.LocationService;
 import com.logistics.service.WeatherAlertService;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +27,8 @@ public class WeatherAlertServiceImpl implements WeatherAlertService {
 
     private final WeatherAlertRepository weatherAlertRepository;
     private final LocationService locationService;
-
+    private final AgentEventService agentEventService;
+    // Added dependency: AgentEventService
     @Override
     @Transactional
     public WeatherAlertResponse create(WeatherAlertRequest request) {
@@ -36,7 +43,27 @@ public class WeatherAlertServiceImpl implements WeatherAlertService {
                 .rainfallMm(request.rainfallMm())
                 .build();
 
-        return toResponse(weatherAlertRepository.save(alert));
+        WeatherAlert saved = weatherAlertRepository.save(alert);
+
+        // severity is a plain String on this entity (no DB enum constraint - see
+        // Step 5 note), so it's mapped defensively rather than assumed to match
+        // an EventSeverity constant exactly.
+        agentEventService.log(new AgentEventCreateRequest(
+                AgentType.LISTENER, "WEATHER_ALERT_DETECTED", mapSeverityString(saved.getSeverity()),
+                AgentEntityType.INCIDENT, saved.getId(), // AgentEntityType has no WEATHER_ALERT constant - see note below
+                "Weather alert at " + location.getName() + ": " + saved.getAlertType(),
+                null, null, AgentEventStatus.COMPLETED
+        ));
+
+        return toResponse(saved);
+    }
+
+    private EventSeverity mapSeverityString(String severity) {
+        try {
+            return EventSeverity.valueOf(severity.toUpperCase());
+        } catch (Exception e) {
+            return EventSeverity.INFO; // unrecognized severity string - fail safe, not fail loud
+        }
     }
 
     @Override

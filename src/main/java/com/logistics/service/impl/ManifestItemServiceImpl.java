@@ -1,8 +1,8 @@
 package com.logistics.service.impl;
 
 import com.logistics.dto.request.ManifestItemRequest;
-import com.logistics.dto.response.ManifestItemResponse;
 import com.logistics.dto.request.ManifestItemStatusUpdateRequest;
+import com.logistics.dto.response.ManifestItemResponse;
 import com.logistics.entity.DeliveryOrder;
 import com.logistics.entity.Manifest;
 import com.logistics.entity.ManifestItem;
@@ -12,9 +12,9 @@ import com.logistics.entity.enums.OrderStatus;
 import com.logistics.exception.BusinessRuleViolationException;
 import com.logistics.exception.ResourceNotFoundException;
 import com.logistics.repository.ManifestItemRepository;
+import com.logistics.repository.ManifestRepository;
 import com.logistics.service.DeliveryOrderService;
 import com.logistics.service.ManifestItemService;
-import com.logistics.service.ManifestService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,13 +31,18 @@ public class ManifestItemServiceImpl implements ManifestItemService {
             List.of(ManifestStatus.PLANNED, ManifestStatus.DISPATCHED, ManifestStatus.IN_TRANSIT);
 
     private final ManifestItemRepository manifestItemRepository;
-    private final ManifestService manifestService;
+    private final ManifestRepository manifestRepository; // was ManifestService - THIS is the fix
     private final DeliveryOrderService deliveryOrderService;
 
     @Override
     @Transactional
     public ManifestItemResponse addItem(Long manifestId, ManifestItemRequest request) {
-        Manifest manifest = manifestService.findEntity(manifestId);
+        // Read the Manifest entity directly via repository, not ManifestService.
+        // ManifestService depends on ManifestItemService (for the nested items
+        // list in its detail view), so the reverse dependency must not exist.
+        Manifest manifest = manifestRepository.findById(manifestId)
+                .orElseThrow(() -> new ResourceNotFoundException("Manifest not found: " + manifestId));
+
         DeliveryOrder order = deliveryOrderService.findEntity(request.orderId());
 
         boolean alreadyActiveElsewhere = manifestItemRepository.findByOrderId(order.getId()).stream()

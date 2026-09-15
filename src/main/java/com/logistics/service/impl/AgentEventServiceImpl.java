@@ -68,7 +68,9 @@ public class AgentEventServiceImpl implements AgentEventService {
                 .filter(e -> status == null || e.getStatus() == status)
                 .filter(e -> from == null || !e.getCreatedAt().isBefore(from))
                 .filter(e -> to == null || !e.getCreatedAt().isAfter(to))
-                .sorted((a, b) -> b.createdAt().compareTo(a.createdAt()))
+                .sorted((AgentEvent a, AgentEvent b) ->
+                        b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .map(this::toResponse)
                 .toList();
     }
     private AgentEventResponse toResponse(AgentEvent e) {

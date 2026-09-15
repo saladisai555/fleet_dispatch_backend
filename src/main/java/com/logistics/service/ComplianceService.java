@@ -1,6 +1,8 @@
 package com.logistics.service;
 
+import com.logistics.dto.request.ComplianceEvaluateRequest;
 import com.logistics.dto.response.ComplianceCheckResponse;
+import com.logistics.dto.response.ComplianceQaResponse;
 import com.logistics.entity.DeliveryOrder;
 import com.logistics.entity.Driver;
 import com.logistics.entity.Manifest;
@@ -38,7 +40,8 @@ public interface ComplianceService {
     ComplianceCheckResponse recheck(Long changeRequestId);
 
     ComplianceCheckResponse getForChangeRequest(Long changeRequestId);
-
+    // Added to ComplianceService interface
+    ComplianceQaResponse evaluateCandidate(ComplianceEvaluateRequest request); // dry-run, non-persisting
     /**
      * Input carrier for evaluate(). Deliberately holds entities, not DTOs -
      * this is an internal service-to-service contract (DispatchService ->
@@ -54,6 +57,7 @@ public interface ComplianceService {
             List<Long> relevantLocationIds // locations to check for active critical incidents
     ) {}
 
+    // ComplianceService interface - ComplianceEvaluationResult upgraded
     record ComplianceEvaluationResult(
             boolean vehicleCapacityPassed,
             boolean driverHoursPassed,
@@ -62,6 +66,9 @@ public interface ComplianceService {
             boolean temperatureRequirementPassed,
             boolean routeSafetyPassed,
             boolean overallPassed,
-            String failureReason
-    ) {}
+            String failureReason,           // kept - still backs compliance_checks.failure_reason (TEXT column)
+            List<Violation> violations      // new - structured, agent-consumption-ready
+    ) {
+        public record Violation(String code, String message) {}
+    }
 }

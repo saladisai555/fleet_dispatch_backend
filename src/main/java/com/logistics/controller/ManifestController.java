@@ -3,6 +3,7 @@ package com.logistics.controller;
 import com.logistics.dto.*;
 import com.logistics.dto.request.ManifestItemRequest;
 import com.logistics.dto.request.ManifestRequest;
+import com.logistics.dto.request.ManifestStatusUpdateRequest;
 import com.logistics.dto.response.ManifestItemResponse;
 import com.logistics.dto.response.ManifestResponse;
 import com.logistics.entity.enums.ManifestStatus;
@@ -61,5 +62,13 @@ public class ManifestController {
     public ResponseEntity<ManifestItemResponse> addItem(@PathVariable Long manifestId,
                                                         @Valid @RequestBody ManifestItemRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(manifestItemService.addItem(manifestId, request));
+    }
+
+    // Added to ManifestController
+    @PatchMapping("/{manifestId}/status")
+    @PreAuthorize("hasAnyRole('ADMIN','DISPATCHER')")
+    public ResponseEntity<ManifestResponse> updateStatus(@PathVariable Long manifestId,
+                                                         @Valid @RequestBody ManifestStatusUpdateRequest request) {
+        return ResponseEntity.ok(manifestService.updateStatus(manifestId, request.status()));
     }
 }

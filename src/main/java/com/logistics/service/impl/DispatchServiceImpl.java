@@ -157,7 +157,8 @@ public class DispatchServiceImpl implements DispatchService {
     @Override
     @Transactional
     public DispatchChangeRequestResponse approve(Long id, Long reviewerId, String reviewComments) {
-        DispatchChangeRequest dcr = findEntity(id);
+        DispatchChangeRequest dcr = dispatchChangeRequestRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Dispatch change request not found: " + id));
         expireIfDue(dcr);
 
         if (dcr.getStatus() != DispatchChangeStatus.PENDING) {
@@ -182,7 +183,8 @@ public class DispatchServiceImpl implements DispatchService {
     @Override
     @Transactional
     public DispatchChangeRequestResponse reject(Long id, Long reviewerId, String reviewComments) {
-        DispatchChangeRequest dcr = findEntity(id);
+        DispatchChangeRequest dcr = dispatchChangeRequestRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Dispatch change request not found: " + id));
         expireIfDue(dcr);
 
         if (dcr.getStatus() != DispatchChangeStatus.PENDING) {
@@ -201,14 +203,14 @@ public class DispatchServiceImpl implements DispatchService {
         auditLogService.record(reviewerId, "DCR_REJECTED", "DispatchChangeRequest", dcr.getId(),
                 "PENDING", "REJECTED", "Rejected by " + reviewer.getName() + ": " + reviewComments);
 
-        // No operational state mutation - explicitly required by the docs.
         return buildResponse(dcr);
     }
 
     @Override
     @Transactional
     public DispatchChangeRequestResponse execute(Long id) {
-        DispatchChangeRequest dcr = findEntity(id);
+        DispatchChangeRequest dcr = dispatchChangeRequestRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Dispatch change request not found: " + id));
 
         // Gate 1: must be APPROVED (also implicitly rules out EXPIRED/EXECUTED/
         // REJECTED/PENDING, since only APPROVED satisfies this check).

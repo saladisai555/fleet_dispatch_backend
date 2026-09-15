@@ -7,6 +7,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 import java.util.List;
 
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
 public interface DispatchChangeRequestRepository extends JpaRepository<DispatchChangeRequest, Long> {
 
     Optional<DispatchChangeRequest> findByRequestNumber(String requestNumber);
@@ -22,4 +27,9 @@ public interface DispatchChangeRequestRepository extends JpaRepository<DispatchC
             Long affectedManifestId, DispatchChangeStatus status);
 
     List<DispatchChangeRequest> findByReviewedById(Long reviewedById);
+    // Added to DispatchChangeRequestRepository
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT d FROM DispatchChangeRequest d WHERE d.id = :id")
+    Optional<DispatchChangeRequest> findByIdForUpdate(@Param("id") Long id);
 }

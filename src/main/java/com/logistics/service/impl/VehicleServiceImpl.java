@@ -4,12 +4,16 @@ import com.logistics.dto.request.VehicleRequest;
 import com.logistics.dto.response.*;
 import com.logistics.entity.Driver;
 import com.logistics.entity.Location;
+import com.logistics.entity.Manifest;
+import com.logistics.entity.Route;
 import com.logistics.entity.Vehicle;
 import com.logistics.entity.enums.ManifestStatus;
+import com.logistics.entity.enums.RouteStatus;
 import com.logistics.exception.BusinessRuleViolationException;
 import com.logistics.exception.DuplicateResourceException;
 import com.logistics.exception.ResourceNotFoundException;
 import com.logistics.repository.ManifestRepository;
+import com.logistics.repository.RouteRepository;
 import com.logistics.repository.VehicleRepository;
 import com.logistics.service.*;
 import lombok.RequiredArgsConstructor;
@@ -30,8 +34,12 @@ public class VehicleServiceImpl implements VehicleService {
     private final DriverService driverService;
     private final TelemetryService telemetryService;
     private final ManifestRepository manifestRepository;
-    private final ManifestService manifestService;
-    private final RouteService routeService;
+    private final RouteRepository routeRepository;
+    // ManifestItemService and RouteService REMOVED - both transitively depend
+    // on ManifestService, which depends on VehicleService. Injecting either
+    // one here recreates the exact cycle we're trying to eliminate. Reading
+    // directly from ManifestRepository/RouteRepository below breaks it, since
+    // repositories never depend on services.
 
     @Override
     @Transactional
@@ -42,7 +50,6 @@ public class VehicleServiceImpl implements VehicleService {
         if (vehicleRepository.existsByRegistrationNumber(request.registrationNumber())) {
             throw new DuplicateResourceException("Registration number already exists: " + request.registrationNumber());
         }
-
         if (Boolean.TRUE.equals(request.refrigerated())
                 && (request.minTemperatureC() == null || request.maxTemperatureC() == null)) {
             throw new BusinessRuleViolationException(
@@ -97,8 +104,7 @@ public class VehicleServiceImpl implements VehicleService {
         return vehicleRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found: " + id));
     }
-    // Added to VehicleServiceImpl - requires TelemetryService, ManifestService,
-// RouteService as new dependencies on this service (constructor-injected).
+
     @Override
     @Transactional
     public VehicleResponse update(Long id, VehicleRequest request) {
@@ -157,20 +163,58 @@ public class VehicleServiceImpl implements VehicleService {
 
         VehicleTelemetryResponse latestTelemetry = telemetryService.getLatestForVehicle(id).orElse(null);
 
-        // "Active manifest" = the manifest currently assigned to this vehicle in
-        // a non-terminal status. Reuses the same ACTIVE_STATUSES concept as
-        // ManifestService/ComplianceService.
-        ManifestResponse activeManifest = manifestRepository
-                .findByVehicleIdAndStatusIn(id, List.of(ManifestStatus.PLANNED, ManifestStatus.DISPATCHED, ManifestStatus.IN_TRANSIT))
-                .stream().findFirst()
-                .map(m -> manifestService.getById(m.getId()))
-                .orElse(null);
+        List<ManifestStatus> activeStatuses = List.of(
+                ManifestStatus.PLANNED, ManifestStatus.DISPATCHED, ManifestStatus.IN_TRANSIT);
 
-        RouteResponse activeRoute = activeManifest != null
-                ? routeService.getActiveForManifest(activeManifest.id()).orElse(null) // see note below
+        // Read directly from ManifestRepository, NOT ManifestService/ManifestItemService.
+        Manifest activeManifestEntity = manifestRepository
+                .findByVehicleIdAndStatusIn(id, activeStatuses)
+                .stream().findFirst().orElse(null);
+
+        ManifestResponse activeManifest = activeManifestEntity != null
+                ? toManifestSummary(activeManifestEntity)
                 : null;
+
+        // Read directly from RouteRepository, NOT RouteService.
+        RouteResponse activeRoute = activeManifestEntity != null
+                ? routeRepository.findByManifestIdAndStatus(activeManifestEntity.getId(), RouteStatus.ACTIVE)
+                .or(() -> routeRepository.findByManifestIdAndStatus(activeManifestEntity.getId(), RouteStatus.PLANNED))
+                .map(this::toRouteSummary)
+                .orElse(null)
+                : null;
+
         return new VehicleDetailsResponse(toResponse(vehicle), latestTelemetry, activeManifest, activeRoute);
     }
+
+    // Lightweight local mapper - deliberately duplicates a small amount of
+    // mapping logic instead of calling ManifestService/ManifestItemService.
+    // 'items' is intentionally null: a vehicle-details summary doesn't need
+    // the full nested manifest-items list, and including it is exactly what
+    // would force the ManifestItemService dependency back in.
+    private ManifestResponse toManifestSummary(Manifest m) {
+        return new ManifestResponse(
+                m.getId(), m.getManifestNumber(),
+                m.getVehicle().getId(), m.getVehicle().getVehicleCode(),
+                m.getDriver().getId(), m.getDriver().getName(),
+                m.getStartLocation().getId(), m.getStartLocation().getName(),
+                m.getPlannedStartTime(), m.getPlannedEndTime(),
+                m.getActualStartTime(), m.getActualEndTime(), m.getStatus(),
+                null, // items omitted deliberately - see note above
+                m.getCreatedAt(), m.getUpdatedAt()
+        );
+    }
+
+    private RouteResponse toRouteSummary(Route r) {
+        return new RouteResponse(
+                r.getId(), r.getManifest().getId(),
+                r.getOriginLocation().getId(), r.getOriginLocation().getName(),
+                r.getDestinationLocation().getId(), r.getDestinationLocation().getName(),
+                r.getRouteGeometry(), r.getDistanceKm(), r.getEstimatedDurationMinutes(),
+                r.getPlannedStartTime(), r.getPlannedEndTime(), r.getTrafficDelayMinutes(),
+                r.getStatus(), r.getCreatedAt(), r.getUpdatedAt()
+        );
+    }
+
     private VehicleResponse toResponse(Vehicle v) {
         return new VehicleResponse(
                 v.getId(), v.getRegistrationNumber(), v.getVehicleCode(), v.getVehicleType(),
